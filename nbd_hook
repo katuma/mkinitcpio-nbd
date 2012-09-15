@@ -1,16 +1,26 @@
 #!/usr/bin/ash
-
 run_hook() {
-	msg "nbd_host = ${nbd_host}"
-	msg "nbd_name = ${nbd_name}"
-	msg "nbd_port = ${nbd_port}"
-
-	if [ -z "${nbd_host}" -o -z "${nbd_name}" ]; then
-		err "the parameters nbd_host and nbd_name are both required, but at least one of them has not been specificed, see 'mkinitcpio -H nbd' for details!"
-	else
-		msg "loading module..."
-		modprobe nbd
-		msg "connecting..."
-		nbd-client ${nbd_host} ${nbd_port} /dev/nbd0 -persist -name ${nbd_name}
-	fi
+    modprobe nbd
+    for n in 0 1 2 3 4 5 6 7; do
+    	PARAMS=`eval "expr \"\\$nbd$n\" "`;
+        if [ "x$PARAMS" != "x" ]; then
+            HOST=`echo $PARAMS | cut -d : -f 1`
+            PORT=`echo $PARAMS | cut -d : -f 2`
+            NAME=`echo $PARAMS | cut -d : -f 3`
+            RESUME_PARAM="-r"
+            NAME_PARAM="-N $NAME"
+            if /sbin/nbd-client -r 2>&1 | grep unrecognized; then
+                msg "No resume support detected"
+                msg "Patch nbd-client & kernel want to prevent fs crashes due to network outages."
+                RESUME_PARAM=""
+            fi
+            if [ "x$NAME" == "x" ]; then
+                msg "No named export detected, assuming legacy (nbd-per-port) server"
+                /sbin/nbd-client $HOST $PORT /dev/nbd$n -p -s -b 4096 $RESUME_PARAM
+            else
+                /sbin/nbd-client $NAME_PARAM $HOST $PORT /dev/nbd$n -p -s -b 4096 $RESUME_PARAM
+            fi
+        fi
+    done
 }
+# vim: set ft=sh ts=4 sw=4 et:

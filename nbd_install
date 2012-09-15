@@ -2,7 +2,7 @@
 
 build() {
     add_module "nbd"
-    add_binary "nbd-client"
+    add_binary "nbd-client" "/sbin/nbd-client"
     add_runscript
 }
 
@@ -16,16 +16,22 @@ image will be created on the server and not the client.
 
 Kernel Parameters:
 
-<nbd_host> The IP address of the machine running nbd-server.
-           This parameter is required.
+Multiple NBD devices (up to 8) can be specified. Kernel parameters
+are numbered nbd0 to nbd7. The format is:
+nbd<N>=<server_ip>:[<server_port>][:<export_name>]
 
-<nbd_name> The name of the export to connect to as specified in
-           in /etc/nbd-server/config on the server.
-	   This parameter is required.
+nbd<N>        The name of the nbd device. For example nbd0.
 
-<nbd_port> The port on which nbd-server is running. This parameter
-	   is only required if nbd-server is not runinng on the 
-	   default port (10809).
+<server_ip>   The IP address of the machine running nbd-server.
+              This parameter is required.
+
+<server_port> The port on which nbd-server is running. This parameter
+              is only required if nbd-server is not runinng on the
+              default port (10809).
+
+<export_name> The name of the export to connect to as specified in
+              in /etc/nbd-server/config on the server.
+              This parameter is optional (for older nbd servers) 
 
 Also make sure that you set 'root=/dev/nbd0' and the 'ip' parameter
 from the 'net' hook (see 'mkinitcpio -H net' for details).
