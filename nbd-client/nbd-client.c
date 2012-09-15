@@ -472,6 +472,7 @@ int main(int argc, char *argv[]) {
 		{ 0, 0, 0, 0 }, 
 	};
 
+	signal(SIGPIPE, SIG_IGN);
 	logging();
 
 	while((c=getopt_long_only(argc, argv, "-b:c:d:hlnN:rpSst:", long_options, NULL))>=0) {
@@ -601,8 +602,7 @@ int main(int argc, char *argv[]) {
 			err("Cannot detach from terminal");
 	}
 #endif
-	do {
-#ifndef NOFORK
+    do {
 #ifdef SA_NOCLDWAIT
 		struct sigaction sa;
 
@@ -631,8 +631,9 @@ int main(int argc, char *argv[]) {
 			open(nbddev, O_RDONLY);
 			exit(0);
 		}
-#endif
+    } while (0);
 
+	do {
 		if (ioctl(nbd, NBD_DO_IT) < 0) {
 		        int error = errno;
 			fprintf(stderr, "nbd,%d: Kernel call returned: %d", getpid(), error);
@@ -645,7 +646,7 @@ int main(int argc, char *argv[]) {
 					u64 new_size;
 					u32 new_flags;
 
-					close(sock); close(nbd);
+					close(sock);
 					for (;;) {
 						fprintf(stderr, " Reconnecting\n");
 						sock = opennet(hostname, port, sdp);
@@ -653,9 +654,6 @@ int main(int argc, char *argv[]) {
 							break;
 						sleep (1);
 					}
-					nbd = open(nbddev, O_RDWR);
-					if (nbd < 0)
-						err("Cannot open NBD: %m");
 					negotiate(sock, &new_size, &new_flags, name, needed_flags, cflags, opts);
 					if (size64 != new_size) {
 						err("Size of the device changed. Bye");

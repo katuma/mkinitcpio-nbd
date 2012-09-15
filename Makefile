@@ -2,7 +2,7 @@ VERSION	  = $(shell git describe)
 DISTFILES = Makefile nbd_install nbd_hook omit_kill_nbd nbd-client nbd-driver
 DESTDIR:=/
 
-nbd-client/nbd-client:
+nbd-client/nbd-client: nbd-client/nbd-client.c
 	make -C nbd-client DESTDIR=${DESTDIR}
 
 install: nbd-client/nbd-client
