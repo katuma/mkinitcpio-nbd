@@ -6,7 +6,7 @@ nbd-client/nbd-client:
 	make -C nbd-client DESTDIR=${DESTDIR}
 
 install: nbd-client/nbd-client
-	install -m 644 -D nbd-client/nbd-client ${DESTDIR}/usr/lib/initcpio/nbd-client
+	install -m 755 -D nbd-client/nbd-client ${DESTDIR}/usr/lib/initcpio/nbd-client
 	install -m 644 -D nbd_depmod ${DESTDIR}/etc/depmod.d/nbd.conf
 	install -m 644 -D nbd_install ${DESTDIR}/usr/lib/initcpio/install/nbd
 	install -m 644 -D nbd_hook ${DESTDIR}/usr/lib/initcpio/hooks/nbd
