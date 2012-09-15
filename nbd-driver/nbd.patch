@@ -1,0 +1,174 @@
+--- linux-2.6.32/drivers/block/nbd.c	2012-09-15 07:59:05.712592438 +0200
++++ linux-2.6.32-humbuq/drivers/block/nbd.c	2012-09-15 08:03:57.408565344 +0200
+@@ -198,6 +198,7 @@
+ 				task_pid_nr(current), current->comm,
+ 				dequeue_signal_lock(current, &current->blocked, &info));
+ 			result = -EINTR;
++			lo->flags &= ~NBD_FLAG_RESUME;
+ 			sock_shutdown(lo, !send);
+ 			break;
+ 		}
+@@ -445,7 +446,7 @@
+ }
+ 
+ 
+-static void nbd_handle_req(struct nbd_device *lo, struct request *req)
++static int nbd_handle_req(struct nbd_device *lo, struct request *req)
+ {
+ 	if (req->cmd_type != REQ_TYPE_FS)
+ 		goto error_out;
+@@ -453,7 +454,7 @@
+ 	nbd_cmd(req) = NBD_CMD_READ;
+ 	if (rq_data_dir(req) == WRITE) {
+ 		nbd_cmd(req) = NBD_CMD_WRITE;
+-		if (lo->flags & NBD_READ_ONLY) {
++		if (lo->flags & NBD_FLAG_READ_ONLY) {
+ 			printk(KERN_ERR "%s: Write on read-only\n",
+ 					lo->disk->disk_name);
+ 			goto error_out;
+@@ -463,7 +464,7 @@
+ 	req->errors = 0;
+ 
+ 	mutex_lock(&lo->tx_lock);
+-	if (unlikely(!lo->sock)) {
++	if (unlikely((!lo->sock) && ((lo->flags & NBD_FLAG_RESUME) == 0))) {
+ 		mutex_unlock(&lo->tx_lock);
+ 		printk(KERN_ERR "%s: Attempted send on closed socket\n",
+ 		       lo->disk->disk_name);
+@@ -475,8 +476,16 @@
+ 	if (nbd_send_req(lo, req) != 0) {
+ 		printk(KERN_ERR "%s: Request send failed\n",
+ 				lo->disk->disk_name);
+-		req->errors++;
+-		nbd_end_request(req);
++		if (lo->flags & NBD_FLAG_RESUME) {
++			spin_lock_irq(&lo->queue_lock);
++			list_add(&req->queuelist, &lo->waiting_queue);
++			spin_unlock_irq(&lo->queue_lock);
++			mutex_unlock(&lo->tx_lock);
++			return 1;
++		} else {
++			req->errors++;
++			nbd_end_request(req);
++		}
+ 	} else {
+ 		spin_lock(&lo->queue_lock);
+ 		list_add(&req->queuelist, &lo->queue_head);
+@@ -487,11 +496,11 @@
+ 	mutex_unlock(&lo->tx_lock);
+ 	wake_up_all(&lo->active_wq);
+ 
+-	return;
+-
++	return 0;
+ error_out:
+ 	req->errors++;
+ 	nbd_end_request(req);
++	return 1;
+ }
+ 
+ static int nbd_thread(void *data)
+@@ -517,7 +526,8 @@
+ 		spin_unlock_irq(&lo->queue_lock);
+ 
+ 		/* handle request */
+-		nbd_handle_req(lo, req);
++		if (nbd_handle_req(lo, req))
++			return 0;
+ 	}
+ 	return 0;
+ }
+@@ -545,7 +555,7 @@
+ 
+ 		BUG_ON(lo->magic != LO_MAGIC);
+ 
+-		if (unlikely(!lo->sock)) {
++		if (unlikely((!lo->sock) && ((lo->flags & NBD_FLAG_RESUME) == 0))) {
+ 			printk(KERN_ERR "%s: Attempted send on closed socket\n",
+ 				lo->disk->disk_name);
+ 			req->errors++;
+@@ -558,7 +568,8 @@
+ 		list_add_tail(&req->queuelist, &lo->waiting_queue);
+ 		spin_unlock_irq(&lo->queue_lock);
+ 
+-		wake_up(&lo->waiting_wq);
++		if (lo->sock)
++			wake_up(&lo->waiting_wq);
+ 
+ 		spin_lock_irq(q->queue_lock);
+ 	}
+@@ -638,6 +649,10 @@
+ 		lo->xmit_timeout = arg * HZ;
+ 		return 0;
+ 
++	case NBD_SET_FLAGS:
++		lo->flags = arg;
++		return 0;
++
+ 	case NBD_SET_SIZE_BLOCKS:
+ 		lo->bytesize = ((u64) arg) * lo->blksize;
+ 		bdev->bd_inode->i_size = lo->bytesize;
+@@ -672,15 +687,28 @@
+ 		sock_shutdown(lo, 0);
+ 		file = lo->file;
+ 		lo->file = NULL;
+-		nbd_clear_que(lo);
+-		printk(KERN_WARNING "%s: queue cleared\n", lo->disk->disk_name);
++		if ((lo->flags & NBD_FLAG_RESUME) == 0) {
++			nbd_clear_que(lo);
++			printk(KERN_WARNING "%s: queue cleared and device reset.\n", lo->disk->disk_name);
++			lo->bytesize = 0;
++			bdev->bd_inode->i_size = 0;
++			set_capacity(lo->disk, 0);
++			if (max_part > 0)
++				ioctl_by_bdev(bdev, BLKRRPART, 0);
++		} else {
++			struct request *req, *tmp;
++			int moved = 0;
++			spin_lock(&lo->queue_lock);
++			list_for_each_entry_safe(req, tmp, &lo->queue_head, queuelist) {
++				list_del_init(&req->queuelist);
++				list_add(&req->queuelist, &lo->waiting_queue);
++				moved++;
++			}
++			spin_unlock(&lo->queue_lock);
++			printk(KERN_WARNING "%s: retrying %d requests\n", lo->disk->disk_name, moved);
++		}
+ 		if (file)
+ 			fput(file);
+-		lo->bytesize = 0;
+-		bdev->bd_inode->i_size = 0;
+-		set_capacity(lo->disk, 0);
+-		if (max_part > 0)
+-			ioctl_by_bdev(bdev, BLKRRPART, 0);
+ 		return lo->harderror;
+ 	}
+ 
+--- linux-2.6.32/include/linux/nbd.h	2009-12-03 04:51:21.000000000 +0100
++++ linux-2.6.32-humbuq/include/linux/nbd.h	2012-09-14 10:32:24.577693319 +0200
+@@ -27,6 +27,7 @@
+ #define NBD_SET_SIZE_BLOCKS	_IO( 0xab, 7 )
+ #define NBD_DISCONNECT  _IO( 0xab, 8 )
+ #define NBD_SET_TIMEOUT _IO( 0xab, 9 )
++#define NBD_SET_FLAGS 	_IO( 0xab, 10 )
+ 
+ enum {
+ 	NBD_CMD_READ = 0,
+@@ -43,8 +44,15 @@
+ #include <linux/mutex.h>
+ 
+ /* values for flags field */
+-#define NBD_READ_ONLY 0x0001
+-#define NBD_WRITE_NOCHK 0x0002
++#define NBD_FLAG_HAS_FLAGS	(1 << 0)	/* Flags are there */
++#define NBD_FLAG_READ_ONLY	(1 << 1)	/* Device is read-only */
++#define NBD_FLAG_SEND_FLUSH	(1 << 2)	/* Send FLUSH */
++#define NBD_FLAG_SEND_FUA	(1 << 3)	/* Send FUA (Force Unit Access) */
++#define NBD_FLAG_ROTATIONAL	(1 << 4)	/* Use elevator algorithm - rotational media */
++#define NBD_FLAG_SEND_TRIM	(1 << 5)	/* Send TRIM (discard) */
++#define NBD_FLAG_RESUME 	(1 << 6) 	/* Resume connection */
++
++
+ 
+ struct request;
+ 
