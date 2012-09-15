@@ -2,7 +2,7 @@
 
 build() {
     add_module "nbd"
-    add_binary "nbd-client" "/sbin/nbd-client"
+    add_binary "/usr/lib/initcpio/nbd-client" "/sbin/nbd-client"
     add_runscript
 }
 
