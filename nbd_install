@@ -26,7 +26,7 @@ nbd<N>        The name of the nbd device. For example nbd0.
               This parameter is required.
 
 <server_port> The port on which nbd-server is running. This parameter
-              is only required if nbd-server is not runinng on the
+              is only required if nbd-server is not running on the
               default port (10809).
 
 <export_name> The name of the export to connect to as specified in

@@ -12,7 +12,7 @@ run_hook() {
             NAME_PARAM="-N $NAME"
             if /sbin/nbd-client -r 2>&1 | grep unrecognized; then
                 msg "No resume support detected"
-                msg "Patch nbd-client & kernel want to prevent fs crashes due to network outages."
+                msg "Patch nbd-client & kernel to prevent fs crashes due to suspend/network outages."
                 RESUME_PARAM=""
             fi
             if [ "x$NAME" == "x" ]; then
